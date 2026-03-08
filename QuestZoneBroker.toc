@@ -1,0 +1,6 @@
+## Interface: 120001
+## Title: QuestZoneBroker
+## Version: 1.0.7c-full
+Core.lua
+QZB_QTipShim.lua
+QZB_DebugOverlay.lua
