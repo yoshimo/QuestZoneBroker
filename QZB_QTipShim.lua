@@ -1,6 +1,8 @@
+
 -- QuestZoneBroker_QTipShim: lightweight drop-in for LibQTip-1.0 (3 columns)
 QuestZoneBroker_QTipShim = QuestZoneBroker_QTipShim or {}
 local lib = QuestZoneBroker_QTipShim
+
 local function CreateTooltipFrame()
   local f = CreateFrame("Frame", "QZB_QTipShimFrame", UIParent, (BackdropTemplateMixin and "BackdropTemplate") or nil)
   f:SetFrameStrata("TOOLTIP"); f:SetSize(460, 200); f:Hide()
@@ -18,6 +20,7 @@ local function CreateTooltipFrame()
   f._lines = {}; f._regularFont = GameTooltipText; f._headerFont = GameTooltipHeaderText
   f._lineGap = 4; f._colJust = {"LEFT","LEFT","RIGHT"}
   f._totalHeight = 0
+
   local timer = CreateFrame("Frame", nil, f)
   timer:Hide(); timer.parent = f; timer.checkElapsed = 0; timer.elapsed = 0; timer.delay = 0
   timer:SetScript("OnUpdate", function(self, elapsed)
@@ -38,14 +41,17 @@ local function CreateTooltipFrame()
     end
   end)
   f._timer = timer
+
   function f:SetAutoHideDelay(delay, alt)
     delay = tonumber(delay) or 0
     self._timer.delay = delay; self._timer.alt = alt
     if delay > 0 then self._timer:Show() else self._timer:Hide() end
   end
+
   function f:GetFont() return self._regularFont end
   function f:GetHeaderFont() return self._headerFont end
   function f:AddSeparator() local l = self:AddLine(" ") return l end
+
   local function addLine(fnt, c1, c2, c3)
     local line = CreateFrame("Button", nil, f._child)
     line:SetSize(10, 10)
@@ -67,6 +73,7 @@ local function CreateTooltipFrame()
     f._child:SetHeight(f._totalHeight)
     return line
   end
+
   function f:AddLine(c1, c2, c3)
     local l = addLine(self._regularFont, c1, c2, c3)
     return #self._lines, 1
@@ -75,6 +82,7 @@ local function CreateTooltipFrame()
     local l = addLine(self._headerFont, c1, c2 or "", "")
     return #self._lines, 1
   end
+
   function f:SetLineScript(lineIndex, script, func, arg)
     local line = self._lines[lineIndex]
     if not line then return end
@@ -86,12 +94,15 @@ local function CreateTooltipFrame()
       line:EnableMouse(true)
     end
   end
+
   function f:Clear()
     for i=#self._lines,1,-1 do self._lines[i]:Hide(); self._lines[i]:SetParent(nil); self._lines[i]=nil end
     self._totalHeight=0; self._child:SetHeight(1)
   end
+
   return f
 end
+
 function lib:Acquire(key, cols, j1, j2, j3)
   if not lib._instances then lib._instances = {} end
   local tip = lib._instances[key]
@@ -99,9 +110,11 @@ function lib:Acquire(key, cols, j1, j2, j3)
   tip:Clear()
   return tip
 end
+
 function lib:Release(tip)
   if not tip then return end
   tip:Hide(); tip:Clear()
 end
+
 function lib:IsAcquired(key) return lib._instances and lib._instances[key] ~= nil end
 function lib:IterateTooltips() return pairs(lib._instances or {}) end

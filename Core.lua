@@ -36,9 +36,6 @@ local hubsForRender = {}     -- hub tree for current zone
 local neighborZones = {}     -- neighbors data
 local currentMapID, currentZoneName
 local tooltip
-local hubExpandState = hubExpandState or {}
-local offerExpandState = offerExpandState or {}
-local blobExpandState  = blobExpandState  or {}
 
 -- pin scan cache
 local pinCache = {
@@ -51,32 +48,6 @@ local pinCache = {
 local questsOnMapSet, taskOnMapSet = {}, {}
 
 -- ===== Utils =====
-local function _QZB_FindNearestHub(mapID, px, py)
-  if not (mapID and px and py) then return nil end
-  local best, bestD
-  for _, h in ipairs(hubsForRender or {}) do
-    if h and h.mapID == mapID and h.x and h.y then
-      local dx,dy = (h.x - px), (h.y - py)
-      local d = dx*dx + dy*dy
-      if not bestD or d < bestD then best, bestD = h, d end
-    end
-  end
-  return best
-end
-
-local function _QZB_GetQuestCoords(mapID, questID)
-  if not (mapID and questID) then return nil end
-  local m,x,y = GetWaypointForQuest(questID, mapID)
-  if m==mapID and x and y then return x,y end
-  return nil
-end
-
-local function QZB_FormatQuest(title, qid)
-  local qt = title or (qid and (SafeGetQuestTitle and SafeGetQuestTitle(qid))) or '?'
-  if qid then return '"'..qt..'" ('..tostring(qid)..')' end
-  return '"'..qt..'"'
-end
-
 local function SafeGetQuestTitle(questID)
     if C_QuestLog and C_QuestLog.GetTitleForQuestID then
         local t = C_QuestLog.GetTitleForQuestID(questID)
@@ -481,90 +452,230 @@ local function AcquireTooltip(anchor)
     end
 end
 
+-- ===== Hub Enhancement Functions =====
+-- Diese Funktionen erweitern die Hub-Anzeige mit mehr Informationen
+
+local function GetHubTypeSummary(hub)
+    -- Zähle alle Kinder-Quest-Typen und returne formatierte Summary
+    local typeCounts = {}
+    
+    for _, child in ipairs(hub.children or {}) do
+        local qType = child.type or "Unknown"
+        typeCounts[qType] = (typeCounts[qType] or 0) + 1
+    end
+    
+    -- Priorisierte Reihenfolge für schöne Anzeige
+    local parts = {}
+    local priorityOrder = {"AvailableQuest", "Quest", "WorldQuest", "CampaignQuest", "TaskQuest", "AreaPOI"}
+    
+    for _, ptype in ipairs(priorityOrder) do
+        if typeCounts[ptype] and typeCounts[ptype] > 0 then
+            -- Kurznamen für bessere Lesbarkeit
+            local shortName = ptype
+            if ptype == "AvailableQuest" then shortName = "Available"
+            elseif ptype == "WorldQuest" then shortName = "WorldQ"
+            elseif ptype == "CampaignQuest" then shortName = "Campaign"
+            elseif ptype == "TaskQuest" then shortName = "Task"
+            elseif ptype == "AreaPOI" then shortName = "POI" end
+            
+            table.insert(parts, string.format("%d %s", typeCounts[ptype], shortName))
+        end
+    end
+    
+    -- Sonstige Types (falls welche übrig)
+    for ttype, count in pairs(typeCounts) do
+        local found = false
+        for _, ptype in ipairs(priorityOrder) do
+            if ttype == ptype then found = true break end
+        end
+        if not found then
+            table.insert(parts, string.format("%d %s", count, ttype))
+        end
+    end
+    
+    return table.concat(parts, ", ")
+end
+
+local function GetHubDistance(hub)
+    -- Berechne Entfernung vom Spieler zum Hub
+    if not hub.x or not hub.y then return nil end
+    
+    local playerMapID = C_Map.GetBestMapForUnit("player")
+    if not playerMapID or playerMapID ~= hub.mapID then return nil end
+    
+    local playerPos = C_Map.GetPlayerMapPosition(playerMapID, "player")
+    if not playerPos then return nil end
+    
+    local playerX, playerY = playerPos:GetXY()
+    if not playerX or not playerY then return nil end
+    
+    -- Berechne Distanz (genormalisierte Coords sind 0-1, Map ist typisch 200-250 Yards per 0.01)
+    local dx = (playerX - hub.x) * 100 * 3  -- Grobe Konvertierung zu Yards
+    local dy = (playerY - hub.y) * 100 * 3
+    local distYards = math.sqrt(dx*dx + dy*dy)
+    
+    -- Formatiere schön
+    if distYards < 100 then
+        return string.format("%.0fm", distYards)
+    elseif distYards < 1000 then
+        return string.format("%.0fm", distYards)
+    else
+        return string.format("%.1fkm", distYards / 1000)
+    end
+end
+
+local function GetHubColorByDistance(distance)
+    -- Farb-Codierung basierend auf Entfernung
+    if not distance then return "" end
+    
+    -- Parse distance (z.B. "150m")
+    local numStr = distance:match("([0-9%.]+)")
+    if not numStr then return "" end
+    local num = tonumber(numStr)
+    if not num then return "" end
+    
+    -- Klassifizierung
+    if num < 100 then
+        return "|cff1eff00"  -- Grün (nah)
+    elseif num < 300 then
+        return "|cffffcc00"  -- Gelb (mittel)
+    elseif num < 600 then
+        return "|cffff8000"  -- Orange (fern)
+    else
+        return "|cffff0000"  -- Rot (sehr fern)
+    end
+end
+
+local function GetHubColorByQuestAvailability(hub)
+    -- Farb-Codierung basierend auf Quest-Typen im Hub
+    -- Grün wenn viele Available Quests, Orange wenn gemischt, Rot wenn nur schwer
+    
+    local availableCount = 0
+    local questCount = 0
+    
+    for _, child in ipairs(hub.children or {}) do
+        if child.type == "AvailableQuest" then
+            availableCount = availableCount + 1
+        elseif child.type == "Quest" or child.type == "WorldQuest" then
+            questCount = questCount + 1
+        end
+    end
+    
+    local total = #(hub.children or {})
+    if total == 0 then return "" end
+    
+    local availableRatio = availableCount / total
+    
+    if availableRatio > 0.5 then
+        return "|cff1eff00"  -- Grün (viele Available)
+    elseif availableRatio > 0.25 then
+        return "|cffffcc00"  -- Gelb (gemischt)
+    else
+        return "|cff808080"  -- Grau (eher schwierig)
+    end
+end
+
 -- ===== Tooltip rendering (with pin cache sections) =====
-
 local function RenderCurrentZone()
-  if not tooltip then return end
-  if QTip then
-    tooltip:AddHeader("Quests & Hubs in:", currentZoneName or "?")
-    tooltip:AddLine(" ")
-    -- Zonen-Hubs (verschmolzen)
-    if #hubsForRender > 0 then
-      tooltip:AddLine("Typ","Titel","MapID / Zone")
-      tooltip:AddSeparator(1,1,1,1)
-      for _, hub in ipairs(hubsForRender) do
-        local hubMapCol = (hub.mapID or "?") .. " " .. (hub.zone or "?")
-        local key = tostring(hub.mapID or 0)..":"..string.format("%.3f:%.3f", hub.x or 0, hub.y or 0)
-        local expanded = (hubExpandState[key] ~= false)
-        local prefix = expanded and "▾ " or "▸ "
-        local hubTitle = prefix .. (hub.title or "Quest Hub") .. " |cffaaaaaa("..tostring(#(hub.children or {}))..")|r"
-        local hubLine = tooltip:AddLine("QuestHub", hubTitle, hubMapCol)
-        tooltip:SetLineScript(hubLine, "OnMouseDown", function(_,_,button)
-          if button=="LeftButton" then hubExpandState[key] = not expanded; ShowTooltip(broker) else AddTomTomWaypoint(hub) end
-        end)
-        if expanded then
-          for _, child in ipairs(hub.children or {}) do
-            local mapCol = (child.mapID or "?") .. " " .. (child.zone or "?")
-            local label = (child.type=="AvailableQuest" and " |cffffd700(Annehmbar)|r")
-                       or (child.type=="CampaignQuest" and " |cff66ccff(Kampagne)|r")
-                       or (child.type=="TaskQuest" and " |cffc0c0c0(Task)|r") or ""
-            local childTitle = string.format(" • %s%s", child.title or "?", label)
-            local cl = tooltip:AddLine(" ", childTitle, mapCol)
-            tooltip:SetLineScript(cl, "OnMouseDown", function(_,_,button)
-              if IsShiftKeyDown() and button=="LeftButton" then AddAllWaypoints(entries) else AddTomTomWaypoint(child) end
-            end)
-          end
+    if not tooltip then return end
+    if QTip then
+        tooltip:AddHeader("Quests & Hubs in:", currentZoneName or "?")
+        tooltip:AddLine(" ")
+        if #hubsForRender > 0 then
+            tooltip:AddLine("Typ","Titel","Infos")
+            tooltip:AddSeparator(1,1,1,1)
+            for _, hub in ipairs(hubsForRender) do
+                -- ENHANCEMENT 1: Quest-Typ-Verteilung statt nur Zahl
+                local typeSummary = GetHubTypeSummary(hub)
+                
+                -- ENHANCEMENT 2: Entfernung zum Spieler (optional)
+                local hubDistance = GetHubDistance(hub)
+                local distStr = hubDistance and ("  " .. hubDistance) or ""
+                
+                -- ENHANCEMENT 3: Farb-Codierung basierend auf Quest-Verfügbarkeit
+                local hubColor = GetHubColorByQuestAvailability(hub)
+                if hubColor == "" then hubColor = "|cffaaaaaa" end
+                
+                -- Kombiniere alles zu schönem Format
+                local hubTitle = string.format("%s%s %s(%s)|r", 
+                    hubColor, 
+                    hub.title or "Quest Hub", 
+                    distStr,
+                    typeSummary)
+                
+                local hubInfoCol = (hub.mapID or "?") .. "  " .. (hub.zone or "?")
+                local hubLine = tooltip:AddLine("QuestHub", hubTitle, hubInfoCol)
+                
+                tooltip:SetLineScript(hubLine, "OnMouseDown", function(_,_,button)
+                    if IsShiftKeyDown() and button=="LeftButton" then for _,child in ipairs(hub.children) do AddTomTomWaypoint(child) end; AddTomTomWaypoint(hub) else AddTomTomWaypoint(hub) end
+                end)
+                
+                for _, child in ipairs(hub.children) do
+                    local mapCol = (child.mapID or "?") .. "  " .. (child.zone or "?")
+                    local label = (child.type=="AvailableQuest" and " |cffffd700(Annehmbar)|r") or (child.type=="CampaignQuest" and " |cff66ccff(Kampagne)|r") or (child.type=="TaskQuest" and " |cffc0c0c0(Task)|r") or ""
+                    local childTitle = string.format("   • %s%s", child.title or "?", label)
+                    local cl = tooltip:AddLine(" ", childTitle, mapCol)
+                    tooltip:SetLineScript(cl, "OnMouseDown", function(_,_,button)
+                        if IsShiftKeyDown() and button=="LeftButton" then AddAllWaypoints(entries) else AddTomTomWaypoint(child) end
+                    end)
+                end
+            end
         end
-      end
-    end
-
-    -- Pin-Cache Sektionen (nur Blob/Offer)
-    local function section(title, list)
-      if not (list and #list > 0) then return end
-      tooltip:AddLine(" ")
-      tooltip:AddHeader(title)
-      tooltip:AddLine("Typ","Info","Koords")
-      tooltip:AddSeparator(1,1,1,1)
-      for _, p in ipairs(list) do
-        local infoTitle = ((title=="QuestOffer" or (title=="QuestBlob" and p.questID)) and SafeGetQuestTitle and SafeGetQuestTitle(p.questID)) or ((_QZB_SafeTitle and _QZB_SafeTitle(p)) or nil)
-local info = QZB_FormatQuest(infoTitle, p.questID)
-        local coords = (p.x and p.y) and (string.format("%.1f/%.1f", p.x*100, p.y*100)) or "-"
-        if title=="QuestBlob" and (not p.questID) then
-          tooltip:AddLine(' ', '   • Hinweis: Dieser QuestBlob liefert keine QuestID – zeige nur Pin-Details und nahe Quests.', ' ')
+        -- Pin cache sections
+        local function section(title, list)
+            if list and #list > 0 then
+                tooltip:AddLine(" ")
+                tooltip:AddHeader(title)
+                tooltip:AddLine("Typ","Info","Koords")
+                tooltip:AddSeparator(1,1,1,1)
+                for _, p in ipairs(list) do
+                    -- Ermittle den Quest-Titel für bessere Anzeige
+                    local titleText = (p.questID and SafeGetQuestTitle and SafeGetQuestTitle(p.questID)) or (p.atlas or p.name or "-")
+                    
+                    -- Formatiere Info-String basierend auf Pin-Typ
+                    local info
+                    if title == "QuestOffer" and p.questID then
+                        -- Schöne Formatierung für QuestOffer: "Quest Title" (questID)
+                        info = string.format("\"%s\" (%s)", titleText, tostring(p.questID))
+                    else
+                        -- Standard-Formatierung für andere Typen
+                        info = (p.questID and ("questID="..p.questID)) or titleText
+                    end
+                    
+                    local coords = (p.x and p.y) and (string.format("%.1f/%.1f", p.x*100, p.y*100)) or "-"
+                    local line = tooltip:AddLine(title, info, coords)
+                    tooltip:SetLineScript(line, "OnMouseDown", function(_,_,button)
+                        if p.questID then AddTomTomWaypoint({type=title, title=info, questID=p.questID, mapID=p.mapID, x=p.x, y=p.y}) end
+                    end)
+                end
+            end
         end
-        local line = tooltip:AddLine(title, info, coords)
-        tooltip:SetLineScript(line, "OnMouseDown", function(_,_,button)
-          if p.questID then AddTomTomWaypoint({type=title, title=info, questID=p.questID, mapID=p.mapID, x=p.x, y=p.y}) end
-        end)
-      end
-    end
-    section("QuestBlob",  pinCache.QuestBlob)
-    section("QuestOffer", pinCache.QuestOffer)
+        section("QuestBlob", pinCache.QuestBlob)
+        section("QuestHub",  pinCache.QuestHub)
+        section("QuestOffer",pinCache.QuestOffer)
 
-    -- Ungruppiert
-    local ungrouped = {}
-    for _, e in ipairs(entries) do if (e.type=="Quest" or e.type=="WorldQuest" or e.type=="CampaignQuest" or e.type=="AvailableQuest" or e.type=="TaskQuest") and not e._grouped then ungrouped[#ungrouped+1]=e end end
-    if #ungrouped > 0 then
-      table.sort(ungrouped, function(a,b) return (a.title or "") < (b.title or "") end)
-      tooltip:AddLine(" ")
-      tooltip:AddHeader("Weitere Quests in dieser Zone")
-      tooltip:AddLine("Typ","Titel","MapID / Zone")
-      tooltip:AddSeparator(1,1,1,1)
-      for _, e in ipairs(ungrouped) do
-        local mapCol = (e.mapID or "?") .. " " .. (e.zone or "?")
-        local label = (e.type=="AvailableQuest" and " |cffffd700(Annehmbar)|r")
-                   or (e.type=="CampaignQuest" and " |cff66ccff(Kampagne)|r")
-                   or (e.type=="TaskQuest" and " |cffc0c0c0(Task)|r") or ""
-        local titleTxt = (QZB_FormatQuest(((e.questID and SafeGetQuestTitle and SafeGetQuestTitle(e.questID)) or (_QZB_SafeTitle(e) or "?")), e.questID)) .. label
-        local line = tooltip:AddLine(e.type, titleTxt, mapCol)
-        tooltip:SetLineScript(line, "OnMouseDown", function(_,_,button)
-          if IsShiftKeyDown() and button=="LeftButton" then AddAllWaypoints(entries) else AddTomTomWaypoint(e) end
-        end)
-      end
+        -- Ungrouped
+        local ungrouped = {}
+        for _, e in ipairs(entries) do if (e.type=="Quest" or e.type=="WorldQuest" or e.type=="CampaignQuest" or e.type=="AvailableQuest" or e.type=="TaskQuest") and not e._grouped then ungrouped[#ungrouped+1]=e end end
+        if #ungrouped > 0 then
+            table.sort(ungrouped, function(a,b) return (a.title or "") < (b.title or "") end)
+            tooltip:AddLine(" ")
+            tooltip:AddHeader("Weitere Quests in dieser Zone")
+            tooltip:AddLine("Typ","Titel","MapID / Zone")
+            tooltip:AddSeparator(1,1,1,1)
+            for _, e in ipairs(ungrouped) do
+                local mapCol = (e.mapID or "?") .. "  " .. (e.zone or "?")
+                local label = (e.type=="AvailableQuest" and " |cffffd700(Annehmbar)|r") or (e.type=="CampaignQuest" and " |cff66ccff(Kampagne)|r") or (e.type=="TaskQuest" and " |cffc0c0c0(Task)|r") or ""
+                local title = string.format("%s%s", e.title or "?", label)
+                local line = tooltip:AddLine(e.type, title, mapCol)
+                tooltip:SetLineScript(line, "OnMouseDown", function(_,_,button)
+                    if IsShiftKeyDown() and button=="LeftButton" then AddAllWaypoints(entries) else AddTomTomWaypoint(e) end
+                end)
+            end
+        end
+    else
+        tooltip:AddLine("Quests & Hubs in: "..(currentZoneName or "?"))
     end
-  else
-    tooltip:AddLine("Quests & Hubs in: "..(currentZoneName or "?"))
-  end
 end
 
 local function RenderNeighbors()
@@ -580,11 +691,27 @@ local function RenderNeighbors()
             local zoneHeader = tooltip:AddLine("Zone", z.name or ("Map "..zid), tostring(zid))
             tooltip:SetLineScript(zoneHeader, "OnMouseDown", function(_,_,button) if IsShiftKeyDown() and button=="LeftButton" then AddAllWaypoints(z.entries) end end)
             if z.hubsTree and #z.hubsTree > 0 then
-                tooltip:AddLine("Typ","Titel","MapID / Zone")
+                tooltip:AddLine("Typ","Titel","Infos")
                 tooltip:AddSeparator(1,1,1,1)
                 for _, hub in ipairs(z.hubsTree) do
+                    -- ENHANCEMENT 1: Quest-Typ-Verteilung
+                    local typeSummary = GetHubTypeSummary(hub)
+                    
+                    -- ENHANCEMENT 2: Entfernung
+                    local hubDistance = GetHubDistance(hub)
+                    local distStr = hubDistance and ("  " .. hubDistance) or ""
+                    
+                    -- ENHANCEMENT 3: Farb-Codierung
+                    local hubColor = GetHubColorByQuestAvailability(hub)
+                    if hubColor == "" then hubColor = "|cffaaaaaa" end
+                    
+                    local hubTitle = string.format("%s%s %s(%s)|r", 
+                        hubColor,
+                        hub.title or "Quest Hub", 
+                        distStr,
+                        typeSummary)
+                    
                     local hubMapCol = (hub.mapID or "?") .. "  " .. (hub.zone or "?")
-                    local hubTitle = string.format("%s |cffaaaaaa(%d)|r", hub.title or "Quest Hub", #hub.children)
                     local hubLine = tooltip:AddLine("QuestHub", hubTitle, hubMapCol)
                     tooltip:SetLineScript(hubLine, "OnMouseDown", function(_,_,button)
                         if IsShiftKeyDown() and button=="LeftButton" then for _,child in ipairs(hub.children) do AddTomTomWaypoint(child) end; AddTomTomWaypoint(hub) else AddTomTomWaypoint(hub) end
