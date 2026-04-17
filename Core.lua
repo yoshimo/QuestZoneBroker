@@ -1036,7 +1036,7 @@ local function UpdateText()
             totalP = totalP + zp
         end
         if zoneCount == 0 then
-            broker2.text = "Kontinent: –"
+            broker2.text = "Kontinent: \226\128\147"
         elseif totalP > 0 then
             broker2.text = string.format("Kontinent: %dZ · %dQ · %dPOI", zoneCount, totalQ, totalP)
         else
@@ -1128,7 +1128,7 @@ SlashCmdList["QUESTZONEBROKER"] = function(msg)
                 elseif e.poiID then
                     idStr = "poiID=" .. tostring(e.poiID)
                 else
-                    idStr = "–"
+                    idStr = "\226\128\147"
                 end
                 DEFAULT_CHAT_FRAME:AddMessage(string.format(
                     "  |cffaaaaaa%s|r %s [%s] mapID=%s %s",
@@ -1253,8 +1253,8 @@ SlashCmdList["QUESTZONEBROKER"] = function(msg)
 
     else
         DEFAULT_CHAT_FRAME:AddMessage("|cffddaa00[QZB]|r Befehle:")
-        DEFAULT_CHAT_FRAME:AddMessage("  /qzb debug   – alle Einträge pro Zone")
-        DEFAULT_CHAT_FRAME:AddMessage("  /qzb xzone   – zonenübergreifende Duplikate")
-        DEFAULT_CHAT_FRAME:AddMessage("  /qzb hubs [Filter]  – Hub-Koordinaten und Distanzen zu allen Einträgen")
+        DEFAULT_CHAT_FRAME:AddMessage("  /qzb debug   \226\128\147 alle Einträge pro Zone")
+        DEFAULT_CHAT_FRAME:AddMessage("  /qzb xzone   \226\128\147 zonenübergreifende Duplikate")
+        DEFAULT_CHAT_FRAME:AddMessage("  /qzb hubs [Filter]  \226\128\147 Hub-Koordinaten und Distanzen zu allen Einträgen")
     end
 end

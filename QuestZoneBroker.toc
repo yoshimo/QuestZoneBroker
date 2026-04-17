@@ -3,7 +3,11 @@
 ## Notes: Zeigt Zonen-, Hub- und Questinformationen im Broker-Tooltip
 ## Author: Yoshimo
 ## Version: 2.1.0
-## OptionalDeps: LibDataBroker-1.1, LibQTip-1.0
 ## SavedVariables: QuestZoneBrokerDB
+## OptionalDeps: LibDataBroker-1.1, LibQTip-1.0
+
+Libs\LibStub\LibStub.lua
+Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
+Libs\LibQTip-1.0\LibQTip-1.0.lua
 
 Core.lua
